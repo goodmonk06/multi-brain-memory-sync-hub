@@ -1,0 +1,73 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model MemoryItem {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  content   String
+  tagsJson  String   @default("[]") // JSON array of tags
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  syncStatuses MemorySyncStatus[]
+
+  @@index([key])
+  @@map("memory_items")
+}
+
+model Provider {
+  id         String   @id @default(uuid())
+  name       String   @unique
+  type       ProviderType
+  configJson String   @default("{}") // JSON config for API keys, endpoints, etc.
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  syncStatuses MemorySyncStatus[]
+
+  @@map("providers")
+}
+
+enum ProviderType {
+  OPENAI
+  ANTHROPIC
+  GOOGLE
+  OTHER
+}
+
+model MemorySyncStatus {
+  id           String   @id @default(uuid())
+  memoryItemId String
+  providerId   String
+  lastSyncedAt DateTime?
+  status       SyncStatus @default(PENDING)
+  metaJson     String   @default("{}") // JSON for error messages, sync details, etc.
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memoryItem MemoryItem @relation(fields: [memoryItemId], references: [id], onDelete: Cascade)
+  provider   Provider   @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([memoryItemId, providerId])
+  @@index([memoryItemId])
+  @@index([providerId])
+  @@index([status])
+  @@map("memory_sync_statuses")
+}
+
+enum SyncStatus {
+  PENDING
+  SYNCING
+  SUCCESS
+  FAILED
+}
