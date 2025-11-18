@@ -11,30 +11,56 @@ datasource db {
 }
 
 model MemoryItem {
-  id        String   @id @default(uuid())
-  key       String   @unique
-  content   String
-  tagsJson  String   @default("[]") // JSON array of tags
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String    @id @default(uuid())
+  key          String    @unique
+  content      String    @db.Text
+  description  String?
+  category     String?
+  priority     Int       @default(0)
+  expiresAt    DateTime?
+  archived     Boolean   @default(false)
+  templateId   String?
+  collectionId String?
+  metadata     String    @default("{}") @db.JsonB
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  syncStatuses MemorySyncStatus[]
+  template       MemoryTemplate?    @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  collection     MemoryCollection?  @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  syncStatuses   MemorySyncStatus[]
+  versions       MemoryVersion[]
+  tags           MemoryTag[]
+  auditLogs      AuditLog[]
 
   @@index([key])
+  @@index([category])
+  @@index([archived])
+  @@index([templateId])
+  @@index([collectionId])
+  @@index([createdAt])
   @@map("memory_items")
 }
 
 model Provider {
-  id         String   @id @default(uuid())
-  name       String   @unique
-  type       ProviderType
-  configJson String   @default("{}") // JSON config for API keys, endpoints, etc.
-  enabled    Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id             String   @id @default(uuid())
+  name           String   @unique
+  type           ProviderType
+  configJson     String   @default("{}") @db.JsonB
+  enabled        Boolean  @default(true)
+  priority       Int      @default(0)
+  timeout        Int      @default(30000) // milliseconds
+  retryAttempts  Int      @default(3)
+  healthCheckUrl String?
+  metadata       String   @default("{}") @db.JsonB
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  syncStatuses MemorySyncStatus[]
+  syncStatuses   MemorySyncStatus[]
+  healthChecks   ProviderHealthCheck[]
+  auditLogs      AuditLog[]
 
+  @@index([enabled])
+  @@index([priority])
   @@map("providers")
 }
 
@@ -46,22 +72,31 @@ enum ProviderType {
 }
 
 model MemorySyncStatus {
-  id           String   @id @default(uuid())
-  memoryItemId String
-  providerId   String
-  lastSyncedAt DateTime?
-  status       SyncStatus @default(PENDING)
-  metaJson     String   @default("{}") // JSON for error messages, sync details, etc.
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String     @id @default(uuid())
+  memoryItemId  String
+  providerId    String
+  batchId       String?
+  lastSyncedAt  DateTime?
+  status        SyncStatus @default(PENDING)
+  attempts      Int        @default(0)
+  errorMessage  String?
+  errorCode     String?
+  durationMs    Int?
+  externalId    String?    // Provider's reference ID
+  metaJson      String     @default("{}") @db.JsonB
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 
   memoryItem MemoryItem @relation(fields: [memoryItemId], references: [id], onDelete: Cascade)
   provider   Provider   @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  batch      SyncBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
   @@unique([memoryItemId, providerId])
   @@index([memoryItemId])
   @@index([providerId])
   @@index([status])
+  @@index([batchId])
+  @@index([createdAt])
   @@map("memory_sync_statuses")
 }
 
@@ -70,4 +105,167 @@ enum SyncStatus {
   SYNCING
   SUCCESS
   FAILED
+}
+// New entities to add to schema.prisma
+
+model MemoryTemplate {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  category    String?
+  content     String   @db.Text
+  variables   String   @default("[]") @db.JsonB // Array of variable names
+  defaultValues String @default("{}") @db.JsonB // Default values for variables
+  tags        String   @default("[]") @db.JsonB
+  isPublic    Boolean  @default(false)
+  usageCount  Int      @default(0)
+  metadata    String   @default("{}") @db.JsonB
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memories MemoryItem[]
+
+  @@index([category])
+  @@index([isPublic])
+  @@index([createdAt])
+  @@map("memory_templates")
+}
+
+model MemoryVersion {
+  id           String   @id @default(uuid())
+  memoryItemId String
+  version      Int
+  content      String   @db.Text
+  description  String?
+  metadata     String?  @db.JsonB
+  tags         String   @default("[]") @db.JsonB
+  changeType   String   // CREATED, UPDATED, RESTORED
+  changedBy    String?  // User/system identifier
+  createdAt    DateTime @default(now())
+
+  memoryItem MemoryItem @relation(fields: [memoryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([memoryItemId, version])
+  @@index([memoryItemId])
+  @@index([createdAt])
+  @@map("memory_versions")
+}
+
+model Tag {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  category    String?
+  color       String?
+  parentId    String?
+  metadata    String   @default("{}") @db.JsonB
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  parent   Tag?        @relation("TagHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Tag[]       @relation("TagHierarchy")
+  memories MemoryTag[]
+
+  @@index([name])
+  @@index([category])
+  @@index([parentId])
+  @@map("tags")
+}
+
+model MemoryTag {
+  id           String   @id @default(uuid())
+  memoryItemId String
+  tagId        String
+  createdAt    DateTime @default(now())
+
+  memoryItem MemoryItem @relation(fields: [memoryItemId], references: [id], onDelete: Cascade)
+  tag        Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([memoryItemId, tagId])
+  @@index([memoryItemId])
+  @@index([tagId])
+  @@map("memory_tags")
+}
+
+model MemoryCollection {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  category    String?
+  color       String?
+  icon        String?
+  parentId    String?
+  metadata    String   @default("{}") @db.JsonB
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  parent   MemoryCollection?  @relation("CollectionHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children MemoryCollection[] @relation("CollectionHierarchy")
+  memories MemoryItem[]
+
+  @@index([name])
+  @@index([category])
+  @@index([parentId])
+  @@map("memory_collections")
+}
+
+model ProviderHealthCheck {
+  id             String   @id @default(uuid())
+  providerId     String
+  status         String   // HEALTHY, DEGRADED, DOWN
+  responseTimeMs Int
+  statusCode     Int?
+  errorMessage   String?
+  metadata       String   @default("{}") @db.JsonB
+  checkedAt      DateTime @default(now())
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@index([providerId])
+  @@index([status])
+  @@index([checkedAt])
+  @@map("provider_health_checks")
+}
+
+model SyncBatch {
+  id          String   @id @default(uuid())
+  name        String?
+  status      String   // PENDING, RUNNING, COMPLETED, FAILED
+  totalItems  Int      @default(0)
+  completed   Int      @default(0)
+  failed      Int      @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+  metadata    String   @default("{}") @db.JsonB
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  syncStatuses MemorySyncStatus[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("sync_batches")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  entityType   String   // MEMORY, PROVIDER, SYNC_STATUS, etc.
+  entityId     String
+  action       String   // CREATED, UPDATED, DELETED, SYNCED, etc.
+  actorId      String?  // User/system identifier
+  memoryItemId String?
+  providerId   String?
+  changes      String?  @db.JsonB // Before/after values
+  metadata     String   @default("{}") @db.JsonB
+  createdAt    DateTime @default(now())
+
+  memoryItem MemoryItem? @relation(fields: [memoryItemId], references: [id], onDelete: SetNull)
+  provider   Provider?   @relation(fields: [providerId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([memoryItemId])
+  @@index([providerId])
+  @@index([createdAt])
+  @@map("audit_logs")
 }

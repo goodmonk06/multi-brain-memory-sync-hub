@@ -17,6 +17,47 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - memory-sync-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: memory-sync-hub-backend
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/memory_sync_hub?schema=public
+      - PORT=3001
+      - HOST=0.0.0.0
+      - NODE_ENV=production
+      - CORS_ORIGIN=http://localhost:3000
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - memory-sync-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: memory-sync-hub-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - memory-sync-network
+    restart: unless-stopped
 
 volumes:
   postgres_data:
+
+networks:
+  memory-sync-network:
+    driver: bridge

@@ -4,16 +4,25 @@ import { PrismaClient } from '@prisma/client';
 import { memoryRoutes } from './routes/memory.routes';
 import { providerRoutes } from './routes/provider.routes';
 import { syncRoutes } from './routes/sync.routes';
+import { templateRoutes } from './routes/template.routes';
 import { SyncService } from './services/sync.service';
+import { logger } from './lib/logger';
+import { errorHandler } from './lib/errors';
+import { metrics } from './lib/metrics';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+});
 const syncService = new SyncService(prisma);
 
 const fastify = Fastify({
-  logger: {
-    level: process.env.LOG_LEVEL || 'info',
-  },
+  logger,
+  disableRequestLogging: false,
+  requestIdLogLabel: 'reqId',
 });
+
+// Register error handler
+fastify.setErrorHandler(errorHandler);
 
 // Register plugins
 fastify.register(cors, {
@@ -28,10 +37,16 @@ fastify.decorate('syncService', syncService);
 fastify.register(memoryRoutes, { prefix: '/api/memories' });
 fastify.register(providerRoutes, { prefix: '/api/providers' });
 fastify.register(syncRoutes, { prefix: '/api/sync' });
+fastify.register(templateRoutes, { prefix: '/api/templates' });
 
 // Health check
 fastify.get('/health', async () => {
   return { status: 'ok', timestamp: new Date().toISOString() };
+});
+
+// Metrics endpoint
+fastify.get('/metrics', async () => {
+  return metrics.getAllMetrics();
 });
 
 // Graceful shutdown
